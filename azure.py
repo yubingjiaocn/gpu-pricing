@@ -6,9 +6,9 @@ from typing import Dict, List
 import time
 import csv
 
-def get_pricing_data() -> Dict:
-    """Fetch pricing data for US West region."""
-    url = "https://azure.microsoft.com/api/v3/pricing/virtual-machines/page/linux/us-west/"
+def get_pricing_data(region: str) -> Dict:
+    """Fetch pricing data for specified region."""
+    url = f"https://azure.microsoft.com/api/v3/pricing/virtual-machines/page/linux/{region}/"
     params = {
         'showLowPriorityOffers': 'false'
     }
@@ -60,10 +60,10 @@ def parse_gpu_info(gpu_string: str) -> Dict:
     except (ValueError, AttributeError):
         return None
 
-def get_gpu_instances() -> List[Dict]:
+def get_gpu_instances(region: str) -> List[Dict]:
     """Get all VM sizes with GPUs and their pricing information."""
     print("Fetching pricing data...")
-    pricing_data = get_pricing_data()
+    pricing_data = get_pricing_data(region)
 
     print("Fetching instance details...")
     instance_details = get_instance_details()
@@ -107,20 +107,58 @@ def get_gpu_instances() -> List[Dict]:
 
     return list(gpu_instances.values())
 
-def main():
+def standardize_instance_data(instance: Dict, region: str) -> Dict:
+    """Standardize instance data format."""
+    return {
+        'Provider': 'Azure',
+        'Region': region,
+        'Instance Type': instance['Instance Type'],
+        'vCPUs': instance['vCPUs'],
+        'Memory (GB)': instance['Memory (GB)'],  # Already in GB
+        'GPU Type': instance['GPU Type'],
+        'GPU Count': instance['GPU Count'],
+        'On-Demand Price ($/hr)': instance['On-Demand Price ($/hr)'],
+        'Spot Price ($/hr)': instance['Spot Price ($/hr)']
+    }
+
+def get_standardized_gpu_instances(region: str) -> List[Dict]:
+    """Get standardized GPU instance information for the specified region."""
     # Get all GPU instances
     print("Fetching GPU instance types...")
-    gpu_instances = get_gpu_instances()
+    gpu_instances = get_gpu_instances(region)
+
+    if not gpu_instances:
+        print("No GPU instances found or error occurred.")
+        return []
+
+    print(f"Found {len(gpu_instances)} GPU instance types")
+
+    # Standardize each instance
+    print("Standardizing instance data...")
+    standardized_instances = []
+    for instance in gpu_instances:
+        print(f"Processing {instance['Instance Type']}...")
+        standardized = standardize_instance_data(instance, region)
+        standardized_instances.append(standardized)
+
+    return standardized_instances
+
+def main():
+    # Default region if running standalone
+    region = 'us-west'
+
+    # Get standardized GPU instances
+    gpu_instances = get_standardized_gpu_instances(region)
 
     if not gpu_instances:
         print("No GPU instances found or error occurred.")
         return
 
-    print(f"\nFound {len(gpu_instances)} GPU instance types")
-
     # Create DataFrame
     df = pd.DataFrame(gpu_instances)
     df = df[[
+        'Provider',
+        'Region',
         'Instance Type',
         'vCPUs',
         'Memory (GB)',
@@ -134,6 +172,7 @@ def main():
     df.sort_values('Instance Type', inplace=True)
 
     # Format numeric columns
+    df['Memory (GB)'] = df['Memory (GB)'].map('{:.1f}'.format)
     df['On-Demand Price ($/hr)'] = df['On-Demand Price ($/hr)'].map('{:.4f}'.format)
     df['Spot Price ($/hr)'] = df['Spot Price ($/hr)'].map('{:.4f}'.format)
 

@@ -4,19 +4,25 @@ import json
 import csv
 from typing import Dict, List
 
-def get_instance_types_with_gpu() -> List[Dict]:
+def get_zone_from_region(region: str) -> str:
+    """Get a valid zone from the region (e.g., na-siliconvalley-2 from na-siliconvalley)."""
+    return f"{region}-2"
+
+def get_instance_types_with_gpu(region: str) -> List[Dict]:
     """Fetch all Tencent Cloud instance types with GPUs."""
     url = "https://workbench.tencentcloud.com/cgi/api"
+
+    zone = get_zone_from_region(region)
 
     payload = {
         "serviceType": "cvm",
         "action": "DescribeZoneInstanceConfigInfos",
-        "region": "na-siliconvalley",
+        "region": region,
         "data": {
             "Filters": [
                 {
                     "name": "zone",
-                    "Values": ["na-siliconvalley-2"]
+                    "Values": [zone]
                 },
                 {
                     "name": "instance-charge-type",
@@ -53,7 +59,7 @@ def get_instance_types_with_gpu() -> List[Dict]:
                 instances.append({
                     'Instance Type': instance_type,
                     'vCPUs': instance.get('Cpu', 0),
-                    'Memory (GiB)': instance.get('Memory', 0),
+                    'Memory (GB)': instance.get('Memory', 0) * 1.074,  # Convert GiB to GB
                     'GPU Type': instance.get('Externals', {}).get('GPUDesc', "0 * N/A").split(" * ")[1],
                     'GPU Count': instance.get('GpuCount', 0),
                     'On-Demand Price ($/hr)': instance.get('Price', {}).get('UnitPrice', 0)
@@ -65,34 +71,74 @@ def get_instance_types_with_gpu() -> List[Dict]:
         print(f"Error fetching instance types: {str(e)}")
         return []
 
-def main():
+def standardize_instance_data(instance: Dict, region: str) -> Dict:
+    """Standardize instance data format."""
+    return {
+        'Provider': 'Tencent',
+        'Region': region,
+        'Instance Type': instance['Instance Type'],
+        'vCPUs': instance['vCPUs'],
+        'Memory (GB)': instance['Memory (GB)'],  # Already converted to GB
+        'GPU Type': instance['GPU Type'],
+        'GPU Count': instance['GPU Count'],
+        'On-Demand Price ($/hr)': instance['On-Demand Price ($/hr)'],
+        'Spot Price ($/hr)': 0.0  # Tencent doesn't provide spot pricing in this API
+    }
+
+def get_standardized_gpu_instances(region: str) -> List[Dict]:
+    """Get standardized GPU instance information for the specified region."""
     # Get all GPU instances
     print("Fetching GPU instance types...")
-    gpu_instances = get_instance_types_with_gpu()
+    gpu_instances = get_instance_types_with_gpu(region)
+
+    if not gpu_instances:
+        print("No GPU instances found or error occurred.")
+        return []
+
+    print(f"Found {len(gpu_instances)} GPU instance types")
+
+    # Standardize each instance
+    print("Standardizing instance data...")
+    standardized_instances = []
+    for instance in gpu_instances:
+        print(f"Processing {instance['Instance Type']}...")
+        standardized = standardize_instance_data(instance, region)
+        standardized_instances.append(standardized)
+
+    return standardized_instances
+
+def main():
+    # Default region if running standalone
+    region = 'na-siliconvalley'
+
+    # Get standardized GPU instances
+    gpu_instances = get_standardized_gpu_instances(region)
 
     if not gpu_instances:
         print("No GPU instances found or error occurred.")
         return
 
-    print(f"Found {len(gpu_instances)} GPU instance types")
-
     # Create DataFrame
     df = pd.DataFrame(gpu_instances)
     df = df[[
+        'Provider',
+        'Region',
         'Instance Type',
         'vCPUs',
-        'Memory (GiB)',
+        'Memory (GB)',
         'GPU Type',
         'GPU Count',
-        'On-Demand Price ($/hr)'
+        'On-Demand Price ($/hr)',
+        'Spot Price ($/hr)'
     ]]
 
     # Sort by instance type properly
     df = df.sort_values('Instance Type', key=lambda x: x.str.lower())
 
     # Format numeric columns
-    df['Memory (GiB)'] = df['Memory (GiB)'].map('{:.1f}'.format)
-    df['On-Demand Price ($/hr)'] = df['On-Demand Price (CNY/hr)'].map('{:.4f}'.format)
+    df['Memory (GB)'] = df['Memory (GB)'].map('{:.1f}'.format)
+    df['On-Demand Price ($/hr)'] = df['On-Demand Price ($/hr)'].map('{:.4f}'.format)
+    df['Spot Price ($/hr)'] = df['Spot Price ($/hr)'].map('{:.4f}'.format)
 
     # Save to CSV
     df.to_csv('tencent.csv',

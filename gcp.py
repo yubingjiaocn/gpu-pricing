@@ -6,16 +6,19 @@ from google.cloud import compute_v1
 from google.cloud import billing_v1
 from typing import Dict, List
 
-def get_instance_types_with_gpu() -> List[Dict]:
+def get_zone_from_region(region: str) -> str:
+    """Get a valid zone from the region (e.g., us-west1-b from us-west1)."""
+    return f"{region}-b"
+
+def get_instance_types_with_gpu(region: str) -> List[Dict]:
     """Fetch all Compute Engine instance types with GPUs."""
     machine_types_client = compute_v1.MachineTypesClient()
 
-    # Use us-west1 region
     project_id = os.getenv('GOOGLE_CLOUD_PROJECT')
     if not project_id:
         raise ValueError("GOOGLE_CLOUD_PROJECT environment variable must be set")
 
-    zone = 'us-west1-b'
+    zone = get_zone_from_region(region)
     instance_types = []
 
     try:
@@ -36,7 +39,7 @@ def get_instance_types_with_gpu() -> List[Dict]:
                     instance_types.append({
                         'Instance Type': machine.name,
                         'vCPUs': machine.guest_cpus,
-                        'Memory (GiB)': machine.memory_mb / 1024,  # Convert MB to GiB
+                        'Memory (GB)': (machine.memory_mb / 1024) * 1.074,  # Convert GiB to GB
                         'GPU Type': gpu_type,
                         'GPU Count': accelerator.guest_accelerator_count,
                         'Zone': zone
@@ -48,7 +51,7 @@ def get_instance_types_with_gpu() -> List[Dict]:
 
     return instance_types
 
-def get_pricing_info(instance_type: str, gpu_type: str, gpu_count: int) -> tuple:
+def get_pricing_info(instance_type: str, gpu_type: str, gpu_count: int, region: str) -> tuple:
     """Get on-demand and spot pricing for an instance type."""
     billing_client = billing_v1.CloudCatalogClient()
     service_name = "services/6F81-5844-456A"  # Compute Engine service ID
@@ -68,7 +71,7 @@ def get_pricing_info(instance_type: str, gpu_type: str, gpu_count: int) -> tuple
         instance_keywords = instance_type.lower().split('-')
         for sku in skus:
             if (all(x in sku.description.lower() for x in instance_keywords) and
-                'us-west1' in str(sku.service_regions)):
+                region in str(sku.service_regions)):
 
                 # Check if this is spot or on-demand pricing
                 is_spot = 'Spot' in sku.description or 'spot' in str(sku.category)
@@ -91,7 +94,7 @@ def get_pricing_info(instance_type: str, gpu_type: str, gpu_count: int) -> tuple
         for sku in skus:
             if ('gpu' in sku.description.lower() and
                 gpu_type_search.lower() in sku.description.lower() and
-                'us-west1' in str(sku.service_regions)):
+                region in str(sku.service_regions)):
 
                 # Check if this is spot or on-demand pricing
                 is_spot = 'Spot' in sku.description or 'spot' in str(sku.category)
@@ -111,41 +114,73 @@ def get_pricing_info(instance_type: str, gpu_type: str, gpu_count: int) -> tuple
         print(f"Error getting pricing for {instance_type}: {str(e)}")
         return 0.0, 0.0
 
-def main():
+def standardize_instance_data(instance: Dict, region: str) -> Dict:
+    """Standardize instance data format."""
+    instance_type = instance['Instance Type']
+    gpu_type = instance['GPU Type']
+    gpu_count = instance['GPU Count']
+
+    # Get pricing information
+    on_demand_price, spot_price = get_pricing_info(instance_type, gpu_type, gpu_count, region)
+
+    return {
+        'Provider': 'GCP',
+        'Region': region,
+        'Instance Type': instance_type,
+        'vCPUs': instance['vCPUs'],
+        'Memory (GB)': instance['Memory (GB)'],  # Already converted to GB
+        'GPU Type': gpu_type,
+        'GPU Count': gpu_count,
+        'On-Demand Price ($/hr)': on_demand_price,
+        'Spot Price ($/hr)': spot_price
+    }
+
+def get_standardized_gpu_instances(region: str) -> List[Dict]:
+    """Get standardized GPU instance information for the specified region."""
     # Verify environment variable
     if not os.getenv('GOOGLE_CLOUD_PROJECT'):
         print("Error: GOOGLE_CLOUD_PROJECT environment variable must be set")
-        return
+        return []
 
     # Get all GPU instances
     print("Fetching GPU instance types...")
-    gpu_instances = get_instance_types_with_gpu()
+    gpu_instances = get_instance_types_with_gpu(region)
+
+    if not gpu_instances:
+        print("No GPU instances found or error occurred.")
+        return []
+
+    print(f"Found {len(gpu_instances)} GPU instance types")
+
+    # Standardize each instance
+    print("Standardizing instance data...")
+    standardized_instances = []
+    for instance in gpu_instances:
+        print(f"Processing {instance['Instance Type']}...")
+        standardized = standardize_instance_data(instance, region)
+        standardized_instances.append(standardized)
+
+    return standardized_instances
+
+def main():
+    # Default region if running standalone
+    region = 'us-west1'
+
+    # Get standardized GPU instances
+    gpu_instances = get_standardized_gpu_instances(region)
 
     if not gpu_instances:
         print("No GPU instances found or error occurred.")
         return
 
-    print(f"Found {len(gpu_instances)} GPU instance types")
-
-    # Get pricing information
-    print("Fetching pricing information...")
-    for instance in gpu_instances:
-        instance_type = instance['Instance Type']
-        gpu_type = instance['GPU Type']
-        gpu_count = instance['GPU Count']
-        print(f"Processing {instance_type}...")
-
-        # Get pricing
-        on_demand, spot = get_pricing_info(instance_type, gpu_type, gpu_count)
-        instance['On-Demand Price ($/hr)'] = on_demand
-        instance['Spot Price ($/hr)'] = spot
-
-    # Create DataFrame and save to CSV
+    # Create DataFrame
     df = pd.DataFrame(gpu_instances)
     df = df[[
+        'Provider',
+        'Region',
         'Instance Type',
         'vCPUs',
-        'Memory (GiB)',
+        'Memory (GB)',
         'GPU Type',
         'GPU Count',
         'On-Demand Price ($/hr)',
@@ -156,7 +191,7 @@ def main():
     df.sort_values('Instance Type', inplace=True)
 
     # Format numeric columns
-    df['Memory (GiB)'] = df['Memory (GiB)'].map('{:.1f}'.format)
+    df['Memory (GB)'] = df['Memory (GB)'].map('{:.1f}'.format)
     df['On-Demand Price ($/hr)'] = df['On-Demand Price ($/hr)'].map('{:.4f}'.format)
     df['Spot Price ($/hr)'] = df['Spot Price ($/hr)'].map('{:.4f}'.format)
 

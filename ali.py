@@ -2,6 +2,7 @@ import json
 import pandas as pd
 import csv
 import re
+from typing import Dict, List
 
 def clean_js_array(content):
     """Clean JavaScript array string to make it valid JSON."""
@@ -76,16 +77,16 @@ def load_pricing():
             print(f"Error parsing pricing JSON: {str(e)}")
             return {}
 
-def get_us_west_1_instances(pricing_data):
-    """Get set of instance types available in us-west-1."""
-    us_west_1_instances = set()
+def get_instances_in_region(pricing_data: Dict, region: str) -> set:
+    """Get set of instance types available in the specified region."""
+    region_instances = set()
     for key in pricing_data.keys():
         parts = key.split("::")
-        if len(parts) >= 2 and parts[0] == "us-west-1" and "vpc" in key and "linux" in key:
-            us_west_1_instances.add(parts[1])
-    return us_west_1_instances
+        if len(parts) >= 2 and parts[0] == region and "vpc" in key and "linux" in key:
+            region_instances.add(parts[1])
+    return region_instances
 
-def get_gpu_instances(available_instances):
+def get_gpu_instances(available_instances: set) -> List[Dict]:
     """Get all GPU instances that are available in the specified instance set."""
     instances = load_instance_types()
     gpu_instances = []
@@ -101,7 +102,7 @@ def get_gpu_instances(available_instances):
             gpu_info = {
                 'Instance Type': instance_type,
                 'vCPUs': instance.get('CpuCoreCount', 0),
-                'Memory (GiB)': instance.get('MemorySize', 0),
+                'Memory (GB)': instance.get('MemorySize', 0) * 1.074,  # Convert GiB to GB
                 'GPU Type': instance.get('GPUSpec', ''),
                 'GPU Count': gpu_amount
             }
@@ -114,20 +115,19 @@ def get_gpu_instances(available_instances):
 
     return gpu_instances
 
-def get_prices(gpu_instances):
-    """Get pricing information for GPU instances."""
+def get_prices(gpu_instances: List[Dict], region: str) -> List[Dict]:
+    """Get pricing information for GPU instances in the specified region."""
     pricing_data = load_pricing()
-    target_region = "us-west-1"
 
     for instance in gpu_instances:
         instance_type = instance['Instance Type']
         price = 0.0
 
-        # Look for the Linux VPC price in us-west-1
+        # Look for the Linux VPC price in the specified region
         for key, price_info in pricing_data.items():
             parts = key.split("::")
             if (len(parts) >= 2 and
-                parts[0] == target_region and
+                parts[0] == region and
                 parts[1] == instance_type and
                 "vpc" in key and
                 "linux" in key):
@@ -141,51 +141,87 @@ def get_prices(gpu_instances):
 
     return gpu_instances
 
-def main():
+def standardize_instance_data(instance: Dict, region: str) -> Dict:
+    """Standardize instance data format."""
+    return {
+        'Provider': 'Alibaba',
+        'Region': region,
+        'Instance Type': instance['Instance Type'],
+        'vCPUs': instance['vCPUs'],
+        'Memory (GB)': instance['Memory (GB)'],  # Already converted to GB
+        'GPU Type': instance['GPU Type'],
+        'GPU Count': instance['GPU Count'],
+        'On-Demand Price ($/hr)': instance['On-Demand Price ($/hr)'],
+        'Spot Price ($/hr)': 0.0  # Alibaba doesn't provide spot pricing in this API
+    }
+
+def get_standardized_gpu_instances(region: str) -> List[Dict]:
+    """Get standardized GPU instance information for the specified region."""
     # Load pricing data first to get available instances
     print("Loading pricing data...")
     pricing_data = load_pricing()
 
-    # Get instances available in us-west-1
-    print("\nFinding instances available in us-west-1...")
-    us_west_1_instances = get_us_west_1_instances(pricing_data)
-    print(f"Found {len(us_west_1_instances)} instances in us-west-1")
+    # Get instances available in the specified region
+    print(f"\nFinding instances available in {region}...")
+    region_instances = get_instances_in_region(pricing_data, region)
+    print(f"Found {len(region_instances)} instances in {region}")
 
-    # Get GPU instances that are available in us-west-1
+    # Get GPU instances that are available in the region
     print("\nFetching GPU instance types...")
-    gpu_instances = get_gpu_instances(us_west_1_instances)
+    gpu_instances = get_gpu_instances(region_instances)
 
     if not gpu_instances:
-        print("No GPU instances found in us-west-1.")
-        return
+        print(f"No GPU instances found in {region}.")
+        return []
 
-    print(f"\nFound {len(gpu_instances)} GPU instance types in us-west-1")
+    print(f"\nFound {len(gpu_instances)} GPU instance types in {region}")
 
     # Get pricing information
     print("\nFetching pricing information...")
-    gpu_instances = get_prices(gpu_instances)
+    gpu_instances = get_prices(gpu_instances, region)
+
+    # Standardize each instance
+    print("Standardizing instance data...")
+    standardized_instances = []
+    for instance in gpu_instances:
+        print(f"Processing {instance['Instance Type']}...")
+        standardized = standardize_instance_data(instance, region)
+        standardized_instances.append(standardized)
+
+    return standardized_instances
+
+def main():
+    # Default region if running standalone
+    region = 'us-west-1'
+
+    # Get standardized GPU instances
+    gpu_instances = get_standardized_gpu_instances(region)
+
+    if not gpu_instances:
+        print("No GPU instances found or error occurred.")
+        return
 
     # Create DataFrame
     df = pd.DataFrame(gpu_instances)
-
-    # Remove rows where Instance Type is empty
-    df = df[df['Instance Type'].notna() & (df['Instance Type'] != '')]
-
     df = df[[
+        'Provider',
+        'Region',
         'Instance Type',
         'vCPUs',
-        'Memory (GiB)',
+        'Memory (GB)',
         'GPU Type',
         'GPU Count',
-        'On-Demand Price ($/hr)'
+        'On-Demand Price ($/hr)',
+        'Spot Price ($/hr)'
     ]]
 
     # Sort by instance type
     df.sort_values('Instance Type', inplace=True)
 
     # Format numeric columns
-    df['Memory (GiB)'] = df['Memory (GiB)'].map('{:.1f}'.format)
+    df['Memory (GB)'] = df['Memory (GB)'].map('{:.1f}'.format)
     df['On-Demand Price ($/hr)'] = df['On-Demand Price ($/hr)'].map('{:.4f}'.format)
+    df['Spot Price ($/hr)'] = df['Spot Price ($/hr)'].map('{:.4f}'.format)
 
     # Save to CSV
     df.to_csv('alibaba.csv',

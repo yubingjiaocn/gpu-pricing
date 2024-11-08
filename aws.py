@@ -6,9 +6,9 @@ from typing import Dict, List
 import time
 import csv
 
-def get_instance_types_with_gpu() -> List[Dict]:
+def get_instance_types_with_gpu(region: str) -> List[Dict]:
     """Fetch all EC2 instance types with GPUs."""
-    ec2_client = boto3.client('ec2', region_name='us-west-2')
+    ec2_client = boto3.client('ec2', region_name=region)
 
     # Get all instance types
     instance_types = []
@@ -24,7 +24,7 @@ def get_instance_types_with_gpu() -> List[Dict]:
                         instance_types.append({
                             'Instance Type': instance['InstanceType'],
                             'vCPUs': instance['VCpuInfo']['DefaultVCpus'],
-                            'Memory (GiB)': instance['MemoryInfo']['SizeInMiB'] / 1024,  # Convert MiB to GiB
+                            'Memory (GB)': (instance['MemoryInfo']['SizeInMiB'] / 1024) * 1.074,  # Convert GiB to GB
                             'GPU Type': gpu_info['Gpus'][0]['Name'],
                             'GPU Count': sum(gpu['Count'] for gpu in gpu_info['Gpus'])
                         })
@@ -34,9 +34,9 @@ def get_instance_types_with_gpu() -> List[Dict]:
 
     return instance_types
 
-def get_on_demand_price(instance_type: str) -> float:
-    """Get on-demand price for an instance type in us-east-1."""
-    pricing_client = boto3.client('pricing', region_name='us-east-1')
+def get_on_demand_price(instance_type: str, region: str) -> float:
+    """Get on-demand price for an instance type in the specified region."""
+    pricing_client = boto3.client('pricing', region_name='us-east-1')  # Pricing API only available in us-east-1
 
     try:
         response = pricing_client.get_products(
@@ -44,7 +44,7 @@ def get_on_demand_price(instance_type: str) -> float:
             Filters=[
                 {'Type': 'TERM_MATCH', 'Field': 'instanceType', 'Value': instance_type},
                 {'Type': 'TERM_MATCH', 'Field': 'operatingSystem', 'Value': 'Linux'},
-                {'Type': 'TERM_MATCH', 'Field': 'regionCode', 'Value': 'us-east-1'},
+                {'Type': 'TERM_MATCH', 'Field': 'regionCode', 'Value': region},
                 {'Type': 'TERM_MATCH', 'Field': 'tenancy', 'Value': 'Shared'},
                 {'Type': 'TERM_MATCH', 'Field': 'preInstalledSw', 'Value': 'NA'}
             ]
@@ -61,9 +61,9 @@ def get_on_demand_price(instance_type: str) -> float:
 
     return 0.0
 
-def get_spot_price_90d_average(instance_type: str) -> float:
-    """Get 90-day average spot price across all AZs in us-east-1."""
-    ec2_client = boto3.client('ec2', region_name='us-east-1')
+def get_spot_price_90d_average(instance_type: str, region: str) -> float:
+    """Get 90-day average spot price across all AZs in the specified region."""
+    ec2_client = boto3.client('ec2', region_name=region)
     end_time = datetime.utcnow()
     start_time = end_time - timedelta(days=90)
 
@@ -86,57 +86,87 @@ def get_spot_price_90d_average(instance_type: str) -> float:
 
     return 0.0
 
-def main():
+def standardize_instance_data(instance: Dict, region: str) -> Dict:
+    """Standardize instance data format."""
+    instance_type = instance['Instance Type']
+
+    # Get pricing information
+    on_demand_price = get_on_demand_price(instance_type, region)
+    spot_price = get_spot_price_90d_average(instance_type, region)
+
+    return {
+        'Provider': 'AWS',
+        'Region': region,
+        'Instance Type': instance_type,
+        'vCPUs': instance['vCPUs'],
+        'Memory (GB)': instance['Memory (GB)'],
+        'GPU Type': instance['GPU Type'],
+        'GPU Count': instance['GPU Count'],
+        'On-Demand Price ($/hr)': on_demand_price,
+        'Spot Price ($/hr)': spot_price
+    }
+
+def get_standardized_gpu_instances(region: str) -> List[Dict]:
+    """Get standardized GPU instance information for the specified region."""
     # Get all GPU instances
     print("Fetching GPU instance types...")
-    gpu_instances = get_instance_types_with_gpu()
+    gpu_instances = get_instance_types_with_gpu(region)
+
+    if not gpu_instances:
+        print("No GPU instances found or error occurred.")
+        return []
+
+    print(f"Found {len(gpu_instances)} GPU instance types")
+
+    # Standardize each instance
+    print("Standardizing instance data...")
+    standardized_instances = []
+    for instance in gpu_instances:
+        print(f"Processing {instance['Instance Type']}...")
+        standardized = standardize_instance_data(instance, region)
+        standardized_instances.append(standardized)
+        time.sleep(0.5)  # Add delay to avoid API throttling
+
+    return standardized_instances
+
+def main():
+    # Default region if running standalone
+    region = 'us-east-1'
+
+    # Get standardized GPU instances
+    gpu_instances = get_standardized_gpu_instances(region)
 
     if not gpu_instances:
         print("No GPU instances found or error occurred.")
         return
 
-    print(f"Found {len(gpu_instances)} GPU instance types")
-
-    # Get pricing information
-    print("Fetching pricing information...")
-    for instance in gpu_instances:
-        instance_type = instance['Instance Type']
-        print(f"Processing {instance_type}...")
-
-        # Get on-demand price
-        instance['On-Demand Price ($/hr)'] = get_on_demand_price(instance_type)
-
-        # Get spot price
-        instance['Spot Price 90d Avg ($/hr)'] = get_spot_price_90d_average(instance_type)
-
-        # Add some delay to avoid API throttling
-        time.sleep(0.5)
-
-    # Create DataFrame and save to CSV
+    # Create DataFrame
     df = pd.DataFrame(gpu_instances)
     df = df[[
+        'Provider',
+        'Region',
         'Instance Type',
         'vCPUs',
-        'Memory (GiB)',
+        'Memory (GB)',
         'GPU Type',
         'GPU Count',
         'On-Demand Price ($/hr)',
-        'Spot Price 90d Avg ($/hr)'
+        'Spot Price ($/hr)'
     ]]
 
     # Sort by instance type
     df.sort_values('Instance Type', inplace=True)
 
     # Format numeric columns
-    df['Memory (GiB)'] = df['Memory (GiB)'].map('{:.1f}'.format)  # Format memory to 1 decimal place
+    df['Memory (GB)'] = df['Memory (GB)'].map('{:.1f}'.format)
     df['On-Demand Price ($/hr)'] = df['On-Demand Price ($/hr)'].map('{:.4f}'.format)
-    df['Spot Price 90d Avg ($/hr)'] = df['Spot Price 90d Avg ($/hr)'].map('{:.4f}'.format)
+    df['Spot Price ($/hr)'] = df['Spot Price ($/hr)'].map('{:.4f}'.format)
 
-    # Save to CSV with proper formatting
+    # Save to CSV
     df.to_csv('aws.csv',
               index=False,
               sep=',',
-              quoting=csv.QUOTE_MINIMAL)  # Only quote fields that contain special characters
+              quoting=csv.QUOTE_MINIMAL)
 
     print("\nResults saved to aws.csv")
 
