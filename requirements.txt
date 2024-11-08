@@ -1,0 +1,5 @@
+boto3>=1.26.0
+pandas>=1.5.0
+requests>=2.31.0
+google-cloud-compute>=1.11.0
+google-cloud-billing>=1.11.0
