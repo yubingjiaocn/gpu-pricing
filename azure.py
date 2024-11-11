@@ -5,23 +5,117 @@ from datetime import datetime, timedelta
 from typing import Dict, List
 import time
 import csv
+import re
+import io
 
-def get_pricing_data(region: str) -> Dict:
-    """Fetch pricing data for specified region."""
-    url = f"https://azure.microsoft.com/api/v3/pricing/virtual-machines/page/linux/{region}/"
+def convert_region_name(region: str) -> str:
+    """Convert region name to Azure's format."""
+    region_map = {
+        'us-west': 'westus',
+        'us-east': 'eastus',
+        'us-central': 'centralus',
+        'eu-west': 'westeurope',
+        'eu-central': 'centraleurope',
+        'ap-east': 'eastasia',
+        'ap-southeast': 'southeastasia',
+        'china-east': 'chinaeast',
+        'china-east2': 'chinaeast2',
+        'china-north': 'chinanorth',
+        'china-north2': 'chinanorth2'
+    }
+    return region_map.get(region.lower(), region.lower().replace('-', ''))
+
+def get_vm_pricing_data(region: str) -> List[Dict]:
+    """Fetch pricing data for Virtual Machines from Azure retail prices API."""
+    azure_region = convert_region_name(region)
+
+    # Use China-specific endpoint if region is in China
+    if 'china' in region.lower():
+        base_url = "https://prices.azure.cn/api/retail/pricesheet/download"
+        params = {
+            'api-version': '2023-06-01-preview'
+        }
+
+        print(f"Fetching VM pricing data for China region: {azure_region}")
+
+        try:
+            # Get the download URL
+            response = requests.get(base_url, params=params)
+            response.raise_for_status()
+            data = response.json()
+
+            download_url = data.get('DownloadUrl')
+            if not download_url:
+                print("Error: No download URL found in response")
+                return []
+
+            # Download the CSV file
+            csv_response = requests.get(download_url)
+            csv_response.raise_for_status()
+
+            # Parse CSV content
+            all_items = []
+            csv_content = csv_response.content.decode('utf-8')
+            csv_reader = csv.DictReader(io.StringIO(csv_content))
+
+            for row in csv_reader:
+                # Filter for Virtual Machines in the specified region
+                if (row.get('serviceName') == 'Virtual Machines' and
+                    row.get('armRegionName', '').lower() == azure_region.lower()):
+                    all_items.append({
+                        'armSkuName': row.get('armSkuName', ''),
+                        'skuName': row.get('skuName', ''),
+                        'retailPrice': float(row.get('retailPrice', 0)),
+                        'isPrimaryMeterRegion': row.get('isPrimaryMeterRegion', '').lower() == 'true'
+                    })
+
+            print(f"Retrieved {len(all_items)} pricing records for China region")
+            return all_items
+
+        except requests.exceptions.RequestException as e:
+            print(f"Error fetching China pricing data: {str(e)}")
+            if hasattr(e, 'response') and hasattr(e.response, 'text'):
+                print(f"Response content: {e.response.text}")
+            return []
+
+    # Original implementation for non-China regions
+    base_url = "https://prices.azure.com/api/retail/prices"
+    filter_query = f"serviceName eq 'Virtual Machines' and armRegionName eq '{azure_region}'"
     params = {
-        'showLowPriorityOffers': 'false'
+        'api-version': '2023-01-01-preview',
+        '$filter': filter_query
     }
 
+    print(f"Fetching VM pricing data for region: {azure_region}")
+
+    all_items = []
+
     try:
-        response = requests.get(url, params=params)
-        response.raise_for_status()
-        return response.json()
+        while True:
+            response = requests.get(base_url, params=params)
+            response.raise_for_status()
+            data = response.json()
+
+            items = data.get('Items', [])
+            primary_items = [item for item in items
+                           if item.get('isPrimaryMeterRegion', False)]
+            all_items.extend(primary_items)
+
+            next_page = data.get('NextPageLink')
+            if not next_page:
+                break
+
+            base_url = next_page
+            params = {}
+            time.sleep(0.5)
+
+        print(f"Retrieved {len(all_items)} pricing records")
+        return all_items
     except requests.exceptions.RequestException as e:
         print(f"Error fetching pricing data: {str(e)}")
-        if hasattr(response, 'text'):
-            print(f"Response content: {response.text}")
-        return {}
+        if hasattr(e, 'response') and hasattr(e.response, 'text'):
+            print(f"Response content: {e.response.text}")
+        return []
 
 def get_instance_details() -> Dict:
     """Fetch instance details including GPU information."""
@@ -35,7 +129,9 @@ def get_instance_details() -> Dict:
         response = requests.get(url, params=params)
         response.raise_for_status()
         data = response.json()
-        return data.get('attributesByOffer', {})
+        instance_details = data.get('attributesByOffer', {})
+        print(f"Retrieved {len(instance_details)} instance details")
+        return instance_details
     except requests.exceptions.RequestException as e:
         print(f"Error fetching instance details: {str(e)}")
         if hasattr(response, 'text'):
@@ -43,42 +139,97 @@ def get_instance_details() -> Dict:
         return {}
 
 def parse_gpu_info(gpu_string: str) -> Dict:
-    """Parse GPU information from format like '1X V100'."""
+    """Parse GPU information from format like '1X V100' or '8x A100 (NVlink)'."""
     if not gpu_string:
         return None
 
     try:
-        # Split the string into count and type
-        count_str, gpu_type = gpu_string.split('X ', 1)
-        count = int(count_str.strip())
-        gpu_type = f"{gpu_type.strip()}"
+        # Handle fractional GPUs (like "1/2X A10")
+        if '/' in gpu_string:
+            parts = gpu_string.split('X ', 1)
+            if len(parts) != 2:
+                return None
+            fraction = float(eval(parts[0]))  # safely evaluate fraction
+            gpu_type = parts[1].strip()
+            return {
+                'gpu_type': gpu_type,
+                'gpu_count': fraction
+            }
 
-        return {
-            'gpu_type': gpu_type,
-            'gpu_count': count
-        }
-    except (ValueError, AttributeError):
+        # Handle standard format and formats with parentheses
+        match = re.match(r'(\d+)(?:x|X)\s+(.+?)(?:\s+\(.*\))?$', gpu_string)
+        if match:
+            count = int(match.group(1))
+            gpu_type = match.group(2).strip()
+            return {
+                'gpu_type': gpu_type,
+                'gpu_count': count
+            }
+
         return None
+    except (ValueError, AttributeError) as e:
+        print(f"Error parsing GPU string '{gpu_string}': {str(e)}")
+        return None
+
+def normalize_instance_name(name: str) -> str:
+    """Normalize instance name to match between pricing and details APIs."""
+    # Remove common prefixes and suffixes
+    name = name.replace('Standard_', '')
+    name = name.replace('linux-', '')
+    name = name.replace('-standard', '')
+
+    # Convert to lowercase for case-insensitive matching
+    name = name.lower()
+
+    # Remove 'v' from version numbers (e.g., 'v5' -> '5')
+    name = re.sub(r'v(\d)', r'\1', name)
+
+    # Remove underscore and dash variations
+    name = name.replace('_', '')
+    name = name.replace('-', '')
+
+    return name
 
 def get_gpu_instances(region: str) -> List[Dict]:
     """Get all VM sizes with GPUs and their pricing information."""
     print("Fetching pricing data...")
-    pricing_data = get_pricing_data(region)
+    pricing_data = get_vm_pricing_data(region)
 
-    print("Fetching instance details...")
+    print("\nFetching instance details...")
     instance_details = get_instance_details()
 
     if not pricing_data or not instance_details:
-        print("Missing required data:")
+        print("\nMissing required data:")
         print(f"Pricing data: {'Present' if pricing_data else 'Missing'}")
         print(f"Instance details: {'Present' if instance_details else 'Missing'}")
         return []
 
-    # Extract GPU instances and their details
-    gpu_instances = {}
+    # Create pricing lookup dictionary with normalized names
+    pricing_lookup = {}
+    for item in pricing_data:
+        sku_name = item.get('armSkuName', '')
+        if not sku_name:
+            continue
 
-    # First identify all GPU instances from instance details
-    for instance_type, details in instance_details.items():
+        normalized_name = normalize_instance_name(sku_name)
+        if normalized_name not in pricing_lookup:
+            pricing_lookup[normalized_name] = {
+                'on_demand': 0.0,
+                'spot': 0.0,
+                'original_name': item.get('armSkuName', '')  # Keep original name for reference
+            }
+
+        # Update pricing based on the type
+        if 'Spot' in item.get('skuName', ''):
+            pricing_lookup[normalized_name]['spot'] = item.get('retailPrice', 0.0)
+        else:
+            pricing_lookup[normalized_name]['on_demand'] = item.get('retailPrice', 0.0)
+
+    # Process instances with GPU information
+    gpu_instances = []
+    print("\nProcessing GPU instances...")
+
+    for instance_key, details in instance_details.items():
         if 'gpu' not in details:
             continue
 
@@ -86,35 +237,46 @@ def get_gpu_instances(region: str) -> List[Dict]:
         if not gpu_info:
             continue
 
-        # Get pricing information if available
-        price_info = pricing_data.get(instance_type, {})
-        on_demand_price = price_info.get('perhour', 0.0)
-        spot_price = price_info.get('perhourspot', 0.0)
+        normalized_name = normalize_instance_name(instance_key)
 
-        # Get display name from instance details
-        display_name = details.get('instanceName', instance_type.replace('linux-', '').replace('-standard', ''))
+        # Try to find pricing using different name variations
+        pricing = None
+        name_variations = [
+            normalized_name,
+            f"standard{normalized_name}",
+            normalized_name.replace('r', ''),  # Try without memory optimized 'r' suffix
+            normalized_name.replace('s', '')   # Try without SSD suffix
+        ]
 
-        # Create instance entry
-        gpu_instances[instance_type] = {
-            'Instance Type': display_name,
-            'vCPUs': details.get('cores', 0),
-            'Memory (GB)': details.get('ram', 0),
-            'GPU Type': gpu_info['gpu_type'],
-            'GPU Count': gpu_info['gpu_count'],
-            'On-Demand Price ($/hr)': on_demand_price,
-            'Spot Price ($/hr)': spot_price
-        }
+        for variant in name_variations:
+            if variant in pricing_lookup:
+                pricing = pricing_lookup[variant]
+                break
 
-    return list(gpu_instances.values())
+        if pricing and pricing['on_demand'] > 0.0:  # Only include instances with pricing data
+            instance = {
+                'Instance Type': details.get('instanceName', pricing['original_name']),
+                'vCPUs': details.get('cores', 0),
+                'Memory (GB)': details.get('ram', 0),
+                'GPU Type': gpu_info['gpu_type'],
+                'GPU Count': gpu_info['gpu_count'],
+                'On-Demand Price ($/hr)': pricing['on_demand'],
+                'Spot Price ($/hr)': pricing['spot'],
+                'Region': region
+            }
+            gpu_instances.append(instance)
 
-def standardize_instance_data(instance: Dict, region: str) -> Dict:
+    print(f"\nFound {len(gpu_instances)} complete GPU instances with pricing")
+    return gpu_instances
+
+def standardize_instance_data(instance: Dict) -> Dict:
     """Standardize instance data format."""
     return {
         'Provider': 'Azure',
-        'Region': region,
+        'Region': instance['Region'],
         'Instance Type': instance['Instance Type'],
         'vCPUs': instance['vCPUs'],
-        'Memory (GB)': instance['Memory (GB)'],  # Already in GB
+        'Memory (GB)': instance['Memory (GB)'],
         'GPU Type': instance['GPU Type'],
         'GPU Count': instance['GPU Count'],
         'On-Demand Price ($/hr)': instance['On-Demand Price ($/hr)'],
@@ -123,7 +285,6 @@ def standardize_instance_data(instance: Dict, region: str) -> Dict:
 
 def get_standardized_gpu_instances(region: str) -> List[Dict]:
     """Get standardized GPU instance information for the specified region."""
-    # Get all GPU instances
     print("Fetching GPU instance types...")
     gpu_instances = get_gpu_instances(region)
 
@@ -133,19 +294,17 @@ def get_standardized_gpu_instances(region: str) -> List[Dict]:
 
     print(f"Found {len(gpu_instances)} GPU instance types")
 
-    # Standardize each instance
     print("Standardizing instance data...")
     standardized_instances = []
     for instance in gpu_instances:
-        print(f"Processing {instance['Instance Type']}...")
-        standardized = standardize_instance_data(instance, region)
+        standardized = standardize_instance_data(instance)
         standardized_instances.append(standardized)
 
     return standardized_instances
 
 def main():
     # Default region if running standalone
-    region = 'us-west'
+    region = 'china-east2'  # Changed default to China region for testing
 
     # Get standardized GPU instances
     gpu_instances = get_standardized_gpu_instances(region)

@@ -6,9 +6,33 @@ from typing import Dict, List
 import time
 import csv
 
+def is_china_region(region: str) -> bool:
+    """Check if the region is an AWS China region."""
+    return region.startswith('cn-')
+
+def get_boto3_client(service: str, region: str):
+    """Create a boto3 client with appropriate configuration for the region."""
+    config = {}
+    if is_china_region(region):
+        if service == 'pricing':
+            # For China regions, pricing service is available in cn-northwest-1
+            config['region_name'] = 'cn-northwest-1'
+            config['endpoint_url'] = f'https://api.pricing.{region}.amazonaws.com.cn'
+        else:
+            config['region_name'] = region
+            config['endpoint_url'] = f'https://{service}.{region}.amazonaws.com.cn'
+    else:
+        if service == 'pricing':
+            # Global pricing API is only available in us-east-1
+            config['region_name'] = 'us-east-1'
+        else:
+            config['region_name'] = region
+
+    return boto3.client(service, **config)
+
 def get_instance_types_with_gpu(region: str) -> List[Dict]:
     """Fetch all EC2 instance types with GPUs."""
-    ec2_client = boto3.client('ec2', region_name=region)
+    ec2_client = get_boto3_client('ec2', region)
 
     # Get all instance types
     instance_types = []
@@ -36,25 +60,35 @@ def get_instance_types_with_gpu(region: str) -> List[Dict]:
 
 def get_on_demand_price(instance_type: str, region: str) -> float:
     """Get on-demand price for an instance type in the specified region."""
-    pricing_client = boto3.client('pricing', region_name='us-east-1')  # Pricing API only available in us-east-1
+    pricing_client = get_boto3_client('pricing', region)
 
     try:
+        filters = [
+            {'Type': 'TERM_MATCH', 'Field': 'instanceType', 'Value': instance_type},
+            {'Type': 'TERM_MATCH', 'Field': 'operatingSystem', 'Value': 'Linux'},
+            {'Type': 'TERM_MATCH', 'Field': 'tenancy', 'Value': 'Shared'},
+            {'Type': 'TERM_MATCH', 'Field': 'preInstalledSw', 'Value': 'NA'}
+        ]
+
+        # Add region code filter based on region type
+        if is_china_region(region):
+            filters.append({'Type': 'TERM_MATCH', 'Field': 'regionCode', 'Value': region})
+        else:
+            filters.append({'Type': 'TERM_MATCH', 'Field': 'regionCode', 'Value': region})
+
         response = pricing_client.get_products(
             ServiceCode='AmazonEC2',
-            Filters=[
-                {'Type': 'TERM_MATCH', 'Field': 'instanceType', 'Value': instance_type},
-                {'Type': 'TERM_MATCH', 'Field': 'operatingSystem', 'Value': 'Linux'},
-                {'Type': 'TERM_MATCH', 'Field': 'regionCode', 'Value': region},
-                {'Type': 'TERM_MATCH', 'Field': 'tenancy', 'Value': 'Shared'},
-                {'Type': 'TERM_MATCH', 'Field': 'preInstalledSw', 'Value': 'NA'}
-            ]
+            Filters=filters
         )
 
         if response['PriceList']:
             price_data = json.loads(response['PriceList'][0])
             terms = price_data['terms']['OnDemand']
             price_dimensions = list(terms.values())[0]['priceDimensions']
-            price = float(list(price_dimensions.values())[0]['pricePerUnit']['USD'])
+            if is_china_region(region):
+                price = float(list(price_dimensions.values())[0]['pricePerUnit']['CNY'])
+            else:
+                price = float(list(price_dimensions.values())[0]['pricePerUnit']['USD'])
             return price
     except Exception as e:
         print(f"Error getting on-demand price for {instance_type}: {str(e)}")
@@ -63,7 +97,7 @@ def get_on_demand_price(instance_type: str, region: str) -> float:
 
 def get_spot_price_90d_average(instance_type: str, region: str) -> float:
     """Get 90-day average spot price across all AZs in the specified region."""
-    ec2_client = boto3.client('ec2', region_name=region)
+    ec2_client = get_boto3_client('ec2', region)
     end_time = datetime.utcnow()
     start_time = end_time - timedelta(days=90)
 
@@ -131,7 +165,7 @@ def get_standardized_gpu_instances(region: str) -> List[Dict]:
 
 def main():
     # Default region if running standalone
-    region = 'us-east-1'
+    region = 'cn-northwest-1'  # Can be changed to 'cn-north-1' or 'cn-northwest-1' for China regions
 
     # Get standardized GPU instances
     gpu_instances = get_standardized_gpu_instances(region)
