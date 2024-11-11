@@ -4,9 +4,7 @@ import azure
 import gcp
 import ali
 import tencent
-from typing import List, Dict, Tuple
-import importlib
-import time
+from typing import List, Tuple
 
 def get_provider_module(provider: str):
     """Map provider names to their respective modules."""
@@ -88,7 +86,10 @@ def main():
         ('Azure', 'westus2'),
         ('GCP', 'us-west1'),
         ('Ali', 'us-west-1'),
-        ('Tencent', 'na-siliconvalley')
+        ('Tencent', 'na-siliconvalley-2'),
+        ('Azure', 'chinanorth3'),
+        ('Ali', 'cn-beijing'),
+        ('Tencent', 'ap-beijing-6')
     ]
 
     print("Fetching GPU pricing information from multiple providers...")
@@ -99,7 +100,7 @@ def main():
         return
 
     # Sort by provider and instance type
-    df = df.sort_values(['Provider', 'Instance Type'])
+    df = df.sort_values(['Provider', 'Region', 'Instance Type'])
 
     # Format numeric columns
     df['Memory (GB)'] = pd.to_numeric(df['Memory (GB)'], errors='coerce').fillna(0).map('{:.1f}'.format)

@@ -62,36 +62,48 @@ def get_on_demand_price(instance_type: str, region: str) -> float:
     """Get on-demand price for an instance type in the specified region."""
     pricing_client = get_boto3_client('pricing', region)
 
-    try:
-        filters = [
-            {'Type': 'TERM_MATCH', 'Field': 'instanceType', 'Value': instance_type},
-            {'Type': 'TERM_MATCH', 'Field': 'operatingSystem', 'Value': 'Linux'},
-            {'Type': 'TERM_MATCH', 'Field': 'tenancy', 'Value': 'Shared'},
-            {'Type': 'TERM_MATCH', 'Field': 'preInstalledSw', 'Value': 'NA'}
-        ]
+    price = 0.0
+    retries = 0
 
-        # Add region code filter based on region type
-        if is_china_region(region):
-            filters.append({'Type': 'TERM_MATCH', 'Field': 'regionCode', 'Value': region})
-        else:
-            filters.append({'Type': 'TERM_MATCH', 'Field': 'regionCode', 'Value': region})
+    while (price == 0.0):
+        try:
+            filters = [
+                {'Type': 'TERM_MATCH', 'Field': 'instanceType', 'Value': instance_type},
+                {'Type': 'TERM_MATCH', 'Field': 'operatingSystem', 'Value': 'Linux'},
+                {'Type': 'TERM_MATCH', 'Field': 'tenancy', 'Value': 'Shared'},
+                {'Type': 'TERM_MATCH', 'Field': 'preInstalledSw', 'Value': 'NA'},
+                {'Type': 'TERM_MATCH', 'Field': 'capacitystatus', 'Value': 'Used'},
+                {'Type': 'TERM_MATCH', 'Field': 'regionCode', 'Value': region}
+            ]
 
-        response = pricing_client.get_products(
-            ServiceCode='AmazonEC2',
-            Filters=filters
-        )
+            response = pricing_client.get_products(
+                ServiceCode='AmazonEC2',
+                Filters=filters
+            )
 
-        if response['PriceList']:
-            price_data = json.loads(response['PriceList'][0])
-            terms = price_data['terms']['OnDemand']
-            price_dimensions = list(terms.values())[0]['priceDimensions']
-            if is_china_region(region):
-                price = float(list(price_dimensions.values())[0]['pricePerUnit']['CNY'])
-            else:
-                price = float(list(price_dimensions.values())[0]['pricePerUnit']['USD'])
-            return price
-    except Exception as e:
-        print(f"Error getting on-demand price for {instance_type}: {str(e)}")
+            if response['PriceList']:
+                price_data = json.loads(response['PriceList'][0])
+                terms = price_data['terms']['OnDemand']
+                price_dimensions = list(terms.values())[0]['priceDimensions']
+                if is_china_region(region):
+                    price = float(list(price_dimensions.values())[0]['pricePerUnit']['CNY'])
+                else:
+                    price = float(list(price_dimensions.values())[0]['pricePerUnit']['USD'])
+
+                if price != 0.0:
+                    return price
+
+                print(f"Warning: Price is 0.0 for {instance_type} in {region}, retrying...")
+                retries += 1
+                if (retries > 3):
+                    print(f"Error: Price is still 0.0 for {instance_type} in {region} after 5 retries")
+                    print(json.dumps(price_data))
+                    return 0.0
+
+                time.sleep(1)
+
+        except Exception as e:
+            print(f"Error getting on-demand price for {instance_type}: {str(e)}")
 
     return 0.0
 
