@@ -102,7 +102,7 @@ def get_gpu_instances(available_instances: set) -> List[Dict]:
             gpu_info = {
                 'Instance Type': instance_type,
                 'vCPUs': instance.get('CpuCoreCount', 0),
-                'Memory (GB)': instance.get('MemorySize', 0) * 1.074,  # Convert GiB to GB
+                'Memory (GB)': instance.get('MemorySize', 0),  # Convert GiB to GB
                 'GPU Type': instance.get('GPUSpec', ''),
                 'GPU Count': gpu_amount
             }

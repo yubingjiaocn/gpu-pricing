@@ -48,7 +48,7 @@ def get_instance_types_with_gpu(region: str) -> List[Dict]:
                         instance_types.append({
                             'Instance Type': instance['InstanceType'],
                             'vCPUs': instance['VCpuInfo']['DefaultVCpus'],
-                            'Memory (GB)': (instance['MemoryInfo']['SizeInMiB'] / 1024) * 1.074,  # Convert GiB to GB
+                            'Memory (GB)': (instance['MemoryInfo']['SizeInMiB'] / 1024),  # Convert GiB to GB
                             'GPU Type': gpu_info['Gpus'][0]['Name'],
                             'GPU Count': sum(gpu['Count'] for gpu in gpu_info['Gpus'])
                         })

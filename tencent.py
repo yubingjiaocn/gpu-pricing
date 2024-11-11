@@ -66,7 +66,7 @@ def get_instance_types_with_gpu(region: str) -> List[Dict]:
                 instances.append({
                     'Instance Type': instance_type,
                     'vCPUs': instance.get('Cpu', 0),
-                    'Memory (GB)': instance.get('Memory', 0) * 1.074,  # Convert GiB to GB
+                    'Memory (GB)': instance.get('Memory', 0),  # Convert GiB to GB
                     'GPU Type': instance.get('Externals', {}).get('GPUDesc', "0 * N/A").split(" * ")[1],
                     'GPU Count': instance.get('GpuCount', 0),
                     'On-Demand Price ($/hr)': price_usd

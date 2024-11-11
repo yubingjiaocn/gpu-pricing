@@ -39,7 +39,7 @@ def get_instance_types_with_gpu(region: str) -> List[Dict]:
                     instance_types.append({
                         'Instance Type': machine.name,
                         'vCPUs': machine.guest_cpus,
-                        'Memory (GB)': (machine.memory_mb / 1024) * 1.074,  # Convert GiB to GB
+                        'Memory (GB)': (machine.memory_mb / 1024),  # Convert GiB to GB
                         'GPU Type': gpu_type,
                         'GPU Count': accelerator.guest_accelerator_count,
                         'Zone': zone
