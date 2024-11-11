@@ -2,6 +2,7 @@ import json
 import pandas as pd
 import csv
 import re
+import requests
 from typing import Dict, List
 
 def clean_js_array(content):
@@ -41,12 +42,15 @@ def fix_json_content(content):
     return '\n'.join(fixed_lines)
 
 def load_instance_types():
-    """Load and parse instance type definitions."""
-    with open('instanceTypeDefinition.js', 'r') as f:
-        content = f.read()
-        # First clean the overall structure
+    """Load and parse instance type definitions from Alibaba Cloud API."""
+    url = "https://g.alicdn.com/aliyun/ecs-price-info-intl/2.0.305/price/js_price/filter_price/instanceTypeDefinition.js"
+    try:
+        response = requests.get(url)
+        response.raise_for_status()
+        content = response.text
+
+        # Clean and parse the JavaScript content
         content = clean_js_array(content)
-        # Then fix the JSON content
         content = fix_json_content(content)
 
         try:
@@ -62,20 +66,27 @@ def load_instance_types():
             print(content[:500])
             return []
 
+    except requests.RequestException as e:
+        print(f"Error fetching instance types: {str(e)}")
+        return []
+
 def load_pricing():
-    """Load and parse pricing data."""
-    with open('instancePrice.json', 'r') as f:
-        try:
-            data = json.loads(f.read())
-            # Print first price entry for debugging
-            if data and 'pricingInfo' in data:
-                first_key = next(iter(data['pricingInfo']))
-                print("\nFirst price entry:")
-                print(json.dumps({first_key: data['pricingInfo'][first_key]}, indent=2))
-            return data.get('pricingInfo', {})
-        except json.JSONDecodeError as e:
-            print(f"Error parsing pricing JSON: {str(e)}")
-            return {}
+    """Load and parse pricing data from Alibaba Cloud API."""
+    url = "https://g.alicdn.com/aliyun/ecs-price-info-intl/2.0.305/price/download/instancePrice.json"
+    try:
+        response = requests.get(url)
+        response.raise_for_status()  # Raise an exception for bad status codes
+        data = response.json()
+
+        # Print first price entry for debugging
+        if data and 'pricingInfo' in data:
+            first_key = next(iter(data['pricingInfo']))
+            print("\nFirst price entry:")
+            print(json.dumps({first_key: data['pricingInfo'][first_key]}, indent=2))
+        return data.get('pricingInfo', {})
+    except (requests.RequestException, json.JSONDecodeError) as e:
+        print(f"Error fetching or parsing pricing data: {str(e)}")
+        return {}
 
 def get_instances_in_region(pricing_data: Dict, region: str) -> set:
     """Get set of instance types available in the specified region."""
@@ -192,7 +203,7 @@ def get_standardized_gpu_instances(region: str) -> List[Dict]:
 
 def main():
     # Default region if running standalone
-    region = 'us-west-1'
+    region = 'cn-beijing'
 
     # Get standardized GPU instances
     gpu_instances = get_standardized_gpu_instances(region)
