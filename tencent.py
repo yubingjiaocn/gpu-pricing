@@ -4,6 +4,9 @@ import json
 import csv
 from typing import Dict, List
 
+# Conversion rate from CNY to USD
+CNY_TO_USD = 0.138
+
 def get_zone_from_region(region: str) -> str:
     """Get a valid zone from the region (e.g., na-siliconvalley-2 from na-siliconvalley)."""
     return f"{region}-2"
@@ -56,13 +59,17 @@ def get_instance_types_with_gpu(region: str) -> List[Dict]:
                 instance_type = instance.get('InstanceType', '')
                 gpu_family = instance_type.split('.')[0] if '.' in instance_type else 'Unknown'
 
+                # Convert price from CNY to USD
+                price_cny = instance.get('Price', {}).get('UnitPrice', 0)
+                price_usd = price_cny * CNY_TO_USD
+
                 instances.append({
                     'Instance Type': instance_type,
                     'vCPUs': instance.get('Cpu', 0),
                     'Memory (GB)': instance.get('Memory', 0) * 1.074,  # Convert GiB to GB
                     'GPU Type': instance.get('Externals', {}).get('GPUDesc', "0 * N/A").split(" * ")[1],
                     'GPU Count': instance.get('GpuCount', 0),
-                    'On-Demand Price ($/hr)': instance.get('Price', {}).get('UnitPrice', 0)
+                    'On-Demand Price ($/hr)': price_usd
                 })
 
         return instances
