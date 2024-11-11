@@ -8,26 +8,9 @@ import csv
 import re
 import io
 
-def convert_region_name(region: str) -> str:
-    """Convert region name to Azure's format."""
-    region_map = {
-        'us-west': 'westus',
-        'us-east': 'eastus',
-        'us-central': 'centralus',
-        'eu-west': 'westeurope',
-        'eu-central': 'centraleurope',
-        'ap-east': 'eastasia',
-        'ap-southeast': 'southeastasia',
-        'china-east': 'chinaeast',
-        'china-east2': 'chinaeast2',
-        'china-north': 'chinanorth',
-        'china-north2': 'chinanorth2'
-    }
-    return region_map.get(region.lower(), region.lower().replace('-', ''))
-
 def get_vm_pricing_data(region: str) -> List[Dict]:
     """Fetch pricing data for Virtual Machines from Azure retail prices API."""
-    azure_region = convert_region_name(region)
+    azure_region = region
 
     # Use China-specific endpoint if region is in China
     if 'china' in region.lower():
@@ -304,7 +287,7 @@ def get_standardized_gpu_instances(region: str) -> List[Dict]:
 
 def main():
     # Default region if running standalone
-    region = 'china-east2'  # Changed default to China region for testing
+    region = 'westus2'
 
     # Get standardized GPU instances
     gpu_instances = get_standardized_gpu_instances(region)

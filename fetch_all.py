@@ -84,8 +84,8 @@ def fetch_prices(provider_regions: List[Tuple[str, str]]) -> pd.DataFrame:
 def main():
     # Provider-region pairs to fetch data from
     provider_regions = [
-        ('AWS', 'us-east-1'),
-        ('Azure', 'us-west'),
+        ('AWS', 'us-west-2'),
+        ('Azure', 'westus2'),
         ('GCP', 'us-west1'),
         ('Ali', 'us-west-1'),
         ('Tencent', 'na-siliconvalley')
