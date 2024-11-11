@@ -7,15 +7,11 @@ from typing import Dict, List
 # Conversion rate from CNY to USD
 CNY_TO_USD = 0.138
 
-def get_zone_from_region(region: str) -> str:
-    """Get a valid zone from the region (e.g., na-siliconvalley-2 from na-siliconvalley)."""
-    return f"{region}-2"
-
-def get_instance_types_with_gpu(region: str) -> List[Dict]:
+def get_instance_types_with_gpu(zone: str) -> List[Dict]:
     """Fetch all Tencent Cloud instance types with GPUs."""
     url = "https://workbench.tencentcloud.com/cgi/api"
 
-    zone = get_zone_from_region(region)
+    region = zone.rsplit("-", 1)[0]
 
     payload = {
         "serviceType": "cvm",
@@ -116,7 +112,7 @@ def get_standardized_gpu_instances(region: str) -> List[Dict]:
 
 def main():
     # Default region if running standalone
-    region = 'na-siliconvalley'
+    region = 'ap-beijing-6'
 
     # Get standardized GPU instances
     gpu_instances = get_standardized_gpu_instances(region)
