@@ -24,6 +24,7 @@ A Python tool that fetches and compares GPU instance pricing across major cloud 
 ## Prerequisites
 
 ### Python Dependencies
+
 ```bash
 pip install -r requirements.txt
 ```
@@ -31,51 +32,65 @@ pip install -r requirements.txt
 ### Cloud Provider Authentication
 
 #### AWS
+
 - Requires AWS credentials configured
 - Set up AWS credentials in `~/.aws/credentials` or via environment variables:
+
   ```bash
   export AWS_ACCESS_KEY_ID="your_access_key"
   export AWS_SECRET_ACCESS_KEY="your_secret_key"
   ```
+
 - Requires `pricing:GetProducts` and `ec2:DescribeSpotPriceHistory` permission
 
 #### Azure
+
 - No authentication required
 - Uses public retail prices API
 
 #### Google Cloud Platform
+
 - Requires GCP project ID and authentication
 - Requires Virtual Machines API and Billings API enabled
 - Set up environment variables:
+
   ```bash
   export GOOGLE_CLOUD_PROJECT="your_project_id"
   ```
+
 - Authenticate using one of these methods:
   1. Service account key file:
+
      ```bash
      export GOOGLE_APPLICATION_CREDENTIALS="path/to/service-account-key.json"
      ```
+
   2. gcloud CLI:
+
      ```bash
      gcloud auth application-default login
      ```
 
 #### Alibaba Cloud
+
 - No authentication required
 - Uses public JSON file
 
 #### Tencent Cloud
+
 - No authentication required
 - Uses public workbench API
 
 ## Usage
 
 To fetch pricing from all providers:
+
 ```bash
 python fetch_all.py
 ```
 
 To fetch pricing from a specific provider:
+
 ```bash
 python aws.py    # For AWS
 python azure.py  # For Azure
@@ -105,12 +120,13 @@ For a complete list of available region codes, refer to each provider's official
 - AWS Region Codes: [AWS Regions and Endpoints](https://docs.aws.amazon.com/general/latest/gr/rande.html#regional-endpoints)
 - Azure Region Codes: [Azure Region Names](https://learn.microsoft.com/en-us/azure/virtual-machines/regions#region-names)
 - GCP Region Codes: [GCP Region List](https://cloud.google.com/compute/docs/regions-zones#available)
-- Alibaba Cloud Region Codes: [Alibaba Region IDs](https://www.alibabacloud.com/help/en/elastic-compute-service/latest/regions-and-zones#concept-uxw-rt4-xdb)
-- Tencent Cloud Region Codes: [Tencent Region List](https://www.tencentcloud.com/document/api/213/15692)
+- Alibaba Cloud Region Codes: [Alibaba Region IDs](https://www.alibabacloud.com/help/en/ecs/regions-and-zones#concept-nwo-3ho-q3v)
+- Tencent Cloud Region Codes: [Regions and Availability Zones](https://www.tencentcloud.com/document/product/213/6091)
 
 ## Output Format
 
 The tool generates a standardized CSV file with the following columns:
+
 - Provider: Cloud service provider name
 - Region: Data center region
 - Instance Type: Instance type identifier
@@ -128,10 +144,12 @@ The tool generates a standardized CSV file with the following columns:
 - Some regions or instance types may not be available
 - Rate limiting is implemented to avoid API throttling
 - China region support varies by provider
+- All price is converted to USD
 
 ## Disclaimer
 
 This project is proudly developed with the assistance of AI technology. Over 90% of the codebase was written through collaboration with AI assistants:
+
 - Cline: A software engineering focused AI that helped with core implementation and technical documentation
 - Claude: An AI assistant that contributed to architecture design and code refinements
 
