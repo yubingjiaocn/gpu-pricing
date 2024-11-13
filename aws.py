@@ -6,6 +6,8 @@ from typing import Dict, List
 import time
 import csv
 
+CNY_TO_USD = 0.138
+
 def is_china_region(region: str) -> bool:
     """Check if the region is an AWS China region."""
     return region.startswith('cn-')
@@ -86,7 +88,7 @@ def get_on_demand_price(instance_type: str, region: str) -> float:
                 terms = price_data['terms']['OnDemand']
                 price_dimensions = list(terms.values())[0]['priceDimensions']
                 if is_china_region(region):
-                    price = float(list(price_dimensions.values())[0]['pricePerUnit']['CNY'])
+                    price = float(list(price_dimensions.values())[0]['pricePerUnit']['CNY']) * CNY_TO_USD
                 else:
                     price = float(list(price_dimensions.values())[0]['pricePerUnit']['USD'])
 

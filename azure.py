@@ -8,6 +8,8 @@ import csv
 import re
 import io
 
+CNY_TO_USD = 0.138
+
 def get_vm_pricing_data(region: str) -> List[Dict]:
     """Fetch pricing data for Virtual Machines from Azure retail prices API."""
     azure_region = region
@@ -48,7 +50,7 @@ def get_vm_pricing_data(region: str) -> List[Dict]:
                     all_items.append({
                         'armSkuName': row.get('armSkuName', ''),
                         'skuName': row.get('skuName', ''),
-                        'retailPrice': float(row.get('retailPrice', 0)),
+                        'retailPrice': float(row.get('retailPrice', 0)) * CNY_TO_USD,
                         'isPrimaryMeterRegion': row.get('isPrimaryMeterRegion', '').lower() == 'true'
                     })
 
