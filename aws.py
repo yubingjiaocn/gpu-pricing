@@ -128,7 +128,12 @@ def get_spot_price_90d_average(instance_type: str, region: str) -> float:
             prices.extend([float(price['SpotPrice']) for price in page['SpotPriceHistory']])
 
         if prices:
-            return sum(prices) / len(prices)
+            if is_china_region(region):
+                avg_price = float(sum(prices) / len(prices)) * CNY_TO_USD
+            else:
+                avg_price = sum(prices) / len(prices)
+
+            return avg_price
     except Exception as e:
         print(f"Error getting spot price for {instance_type}: {str(e)}")
 
